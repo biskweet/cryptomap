@@ -1,31 +1,43 @@
-import base64
 import json
 import requests
-import time
+from urllib.parse import quote
+from typing import Any
 
 
-SLEEP_DELAY = 0.25
 DOMAIN = "theses.fr"
 ENDPOINT = "/api/v1/theses/recherche/"
 RESPONSE_DATA = "data-raw.json"
 OUTFILE = "data-clean.json"
 MAKE_REQUEST = True
+KEYWORDS = [
+    "Cryptographie",
+    "Cryptologie",
+    "Cryptanalyse",
+    "Attaques par canaux cachés",
+    "Bases de Gröbner",
+    "Générateurs de nombre pseudo-aléatoires"
+]
 
 
-def build_queryurl(pageindex: int, amount: int) -> str:
+def build_queryurl(pageindex: int, amount: int, keywords: list[str]) -> str:
+    kws = ''.join(
+        f"(sujetsLibelle%3A({ kw })%20OR%20sujetsRameauLibelle%3A({ kw })%20OR%20sujetsRameauPpn%3A({ kw }))%20OR%20titres.%5C*%3A({ kw })"
+        for kw in map(quote, keywords)
+    )
+
     return "https://" + DOMAIN + ENDPOINT +                 \
-        f"?q=(sujetsLibelle%3A(cryptographie)%20OR%20sujetsRameauLibelle%3A(cryptographie)%20OR%20sujetsRameauPpn%3A(cryptographie))%20OR%20titres.%5C*%3A(cryptographie)%20OR%20titres.%5C*%3A(cryptanalyse)%20OR%20(sujetsLibelle%3A(cryptanalyse)%20OR%20sujetsRameauLibelle%3A(cryptanalyse)%20OR%20sujetsRameauPpn%3A(cryptanalyse))%20OR%20(sujetsLibelle%3A(Bases%20de%20Gr%C3%B6bner)%20OR%20sujetsRameauLibelle%3A(Bases%20de%20Gr%C3%B6bner)%20OR%20sujetsRameauPpn%3A(Bases%20de%20Gr%C3%B6bner))%20OR%20(sujetsLibelle%3A(cryptologie)%20OR%20sujetsRameauLibelle%3A(cryptologie)%20OR%20sujetsRameauPpn%3A(cryptologie))%20OR%20titres.%5C*%3A(cryptologie)%20OR%20(sujetsLibelle%3A(Cryptographie%20quantique)%20OR%20sujetsRameauLibelle%3A(Cryptographie%20quantique)%20OR%20sujetsRameauPpn%3A(Cryptographie%20quantique))%20OR%20titres.%5C*%3A(Cryptographie%20quantique)" \
-        f"&debut={ pageindex * amount }&nombre={ amount }"  \
+        f"?debut={ pageindex * amount }&nombre={ amount }"  \
         f"&tri=pertinence"                                  \
-        f"&filtres=%5BStatut%3D%22soutenue%22%5D"
+        f"&filtres=%5BStatut%3D%22soutenue%22%5D"           \
+        f"&q={ kws }"
 
 
 if MAKE_REQUEST:
     session = requests.Session()
 
-    all_thesis: list[dict] = [ ]
+    all_thesis: list[dict[str, Any]] = [ ]
 
-    response = session.get(build_queryurl(0, 10000))
+    response = session.get(build_queryurl(0, 10000, KEYWORDS))
 
     assert response.status_code == 200
 
@@ -47,15 +59,15 @@ class Researcher:
         self.fname = fname
         self.lname = lname
         self.thesis_id = thesis_id
-        self.supervisions = set()
+        self.supervisions: set[str] = set()
 
     def add_thesis(self, thesis_id: str):
         self.thesis_id = thesis_id
 
-    def add_supervision(self, thesis_id: str | list[str]):
+    def add_supervision(self, thesis_id: str):
         self.supervisions.add(thesis_id)
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, str | list[str] | None]:
         return {
             "ppn": self.ppn,
             "fname": self.fname,
@@ -73,7 +85,7 @@ class Thesis:
         self.supervisors = supervisors
         self.defense = defense
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, str | list[str]]:
         return {
             "tid": self.tid,
             "ppn": self.ppn,
@@ -134,8 +146,8 @@ for thesis_data in all_thesis:
 
 
 # Preparing data
-nodes = [ ]
-edges = [ ]
+nodes: list[dict[str, dict[str, str]]] = [ ]
+edges: list[dict[str, dict[str, str]]] = [ ]
 for researcher in researchersdb.values():
     thesis = None
 
@@ -160,4 +172,3 @@ with open(OUTFILE, "w") as file:
     json.dump({ "nodes": nodes, "edges": edges }, file)
 
 print("Done")
-
