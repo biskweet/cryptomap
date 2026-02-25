@@ -329,9 +329,17 @@
                 }
             },
             {
-                selector: '.highlighted',
+                selector: '.component',
                 style: {
-                    'background-color': '#fcd1ac',
+                    'background-color': '#fff7de',
+                    'transition-property': 'background-color, line-color',
+                    'transition-duration': '0.3s'
+                },
+            },
+            {
+                selector: '.neighbors',
+                style: {
+                    'background-color': '#ffbe8a',
                     'transition-property': 'background-color, line-color',
                     'transition-duration': '0.3s'
                 },
@@ -392,8 +400,12 @@
 
                 // Highlight node and its direct connections
                 node.addClass('focused');
-                node.connectedEdges().addClass('highlighted');
-                node.neighborhood().addClass('highlighted');
+                node.component().addClass('component');
+
+                const directNeighbors = node.neighborhood();
+                directNeighbors.removeClass('component');
+                directNeighbors.addClass('neighbors');
+
                 console.log('focused');
 
                 // DIsplay info window
@@ -403,7 +415,8 @@
             const unfocus = () => {
                 hideInfoWindow();
 
-                cy.elements().removeClass('highlighted');
+                cy.elements().removeClass('component');
+                cy.elements().removeClass('neighbors');
                 cy.elements().removeClass('focused');
                 console.log('unfocused');
             }
@@ -435,7 +448,7 @@
                 showLoader();
                 unfocus();
                 layout_data.name = 'cose';
-		layout_data.refresh = 1e9;
+                layout_data.refresh = 1e9;
                 cy.layout(layout_data).run();
                 hideLoader();
                 cy.fit();
@@ -492,7 +505,7 @@
                                         duration: 1000,
                                         easing: 'ease-in-out-quint'
                                     });
-                                }, 500);
+                                }, 200);
 
                                 resultsContainer.style.display = 'none';
                                 searchInput.value = node.data('label');
