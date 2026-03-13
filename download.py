@@ -1,11 +1,17 @@
 import json
+import time
 import requests
 from urllib.parse import quote
 from typing import Any
 
 
+QUERY_DELAY_SECONDS = 0.1
 DOMAIN = "theses.fr"
-ENDPOINT = "/api/v1/theses/recherche/"
+ENDPOINTS = {
+    "search": "/api/v1/theses/recherche/",
+    "user": "/api/v1/personnes/personne/",
+}
+
 RESPONSE_DATA = "data-raw.json"
 OUTFILE = "data-clean.json"
 MAKE_REQUEST = True
@@ -25,16 +31,24 @@ def build_queryurl(pageindex: int, amount: int, keywords: list[str]) -> str:
         for kw in map(quote, keywords)
     )
 
-    return "https://" + DOMAIN + ENDPOINT +                 \
+    return "https://" + DOMAIN + ENDPOINTS["search"] +      \
         f"?debut={ pageindex * amount }&nombre={ amount }"  \
         f"&tri=pertinence"                                  \
         f"&filtres=%5BStatut%3D%22soutenue%22%5D"           \
         f"&q={ kws }"
 
 
-if MAKE_REQUEST:
-    session = requests.Session()
+def person_to_ppn(person: dict[str, str]):
+    ppn = person.get("ppn") or person.get("id")
+    if ppn is None:
+        ppn = "invalid_" + (author["prenom"] or 'nil').lower() + (author["nom"] or 'nil').lower()
+    return ppn
 
+
+session = requests.Session()
+
+
+if MAKE_REQUEST:
     all_thesis: list[dict[str, Any]] = [ ]
 
     response = session.get(build_queryurl(0, 10000, KEYWORDS))
@@ -102,14 +116,12 @@ for thesis_data in all_thesis:
     tid: str = thesis_data["id"]
 
     author = thesis_data["auteurs"][0]
-    if author.get("ppn") is None:
-        print("Thesis author without a PPN:", author)
-        continue
+    author_ppn = person_to_ppn(author)
 
-    researcher = researchersdb.get(author["ppn"])
+    researcher = researchersdb.get(author_ppn)
     if researcher is None:
         researcher = Researcher(
-            author["ppn"],
+            author_ppn,
             author["prenom"],
             author["nom"]
         )
@@ -117,16 +129,12 @@ for thesis_data in all_thesis:
     researcher.thesis_id = tid
 
     thesis_supervisors: set[str] = set()
-    for superviser_data in thesis_data["directeurs"]:
-        supervisor_ppn = superviser_data["ppn"]
-        if supervisor_ppn is None:
-            print("Invalid superviser", superviser_data)
-            continue
-
+    for supervisor_data in thesis_data["directeurs"]:
+        supervisor_ppn = person_to_ppn(supervisor_data)
         supervisor = researchersdb.get(supervisor_ppn)
 
         if supervisor is None:
-            supervisor = Researcher(supervisor_ppn, superviser_data["prenom"], superviser_data["nom"])
+            supervisor = Researcher(supervisor_ppn, supervisor_data["prenom"], supervisor_data["nom"])
             researchersdb[supervisor.ppn] = supervisor
 
         supervisor.add_supervision(tid)
@@ -135,14 +143,67 @@ for thesis_data in all_thesis:
 
     thesis = Thesis(
         tid,
-        author["ppn"],
+        author_ppn,
         thesis_data["titrePrincipal"],
         thesis_supervisors,
         thesis_data["dateSoutenance"]
     )
 
     thesisdb[tid] = thesis
-    researchersdb[author["ppn"]] = researcher
+    researchersdb[author_ppn] = researcher
+
+
+# Enrich the data with supervisor informations; i.e., for every researcher,
+# try to add defense information even in case their thesis is not in crypto
+for researcher in researchersdb.values():
+    if researcher.ppn.startswith("invalid"):
+        continue  # Truly anonymous researcher
+
+    if researcher.thesis_id is not None:
+        continue  # Information already here
+
+    # `Anonymous' researcher; try the API for more data
+    response = session.get("https://" + DOMAIN + ENDPOINTS['user'] + researcher.ppn)
+    if response.status_code != 200:
+        print(f"Failed to query additional info for { researcher.fname } { researcher.lname }")
+        continue  # Platform does not know about them
+
+    time.sleep(QUERY_DELAY_SECONDS)  # Don't spam the source
+
+    data = response.json()
+    if data["roles"].get("Auteur / Autrice", 0) == 0:
+        continue  # No thesis authorship known
+
+    thesis_data = data["theses"]["Auteur / Autrice"][0]
+
+    tid = thesis_data["id"]
+    thesis = thesisdb.get(tid)
+    thesis_supervisors: set[str] = set()
+
+    # Gathering supervisor data
+    for supervisor_data in thesis_data["directeurs"]:
+        supervisor_ppn = person_to_ppn(supervisor_data)
+        supervisor = researchersdb.get(supervisor_ppn)
+
+        # We don't want to make the db bigger, we just want to enrich it, so let's not add new people
+        if supervisor is None: continue
+
+        supervisor.add_supervision(tid)
+        thesis_supervisors.add(supervisor.ppn)
+
+    thesis = thesisdb.get(tid)
+    if thesis is None:
+        thesis = Thesis(
+            tid,
+            researcher.ppn,
+            thesis_data["titre"],
+            thesis_supervisors,
+            thesis_data["date_soutenance"].split('-')[0]
+        )
+
+        thesisdb[tid] = thesis
+
+    researcher.thesis_id = tid
 
 
 # Preparing data
