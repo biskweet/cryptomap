@@ -29,7 +29,11 @@ const reorderData = (data) => {
     const nodes = data.nodes;
     const edges = data.edges;
 
-    nodes.sort((n1, n2) => parseInt(n1.data.year || "1970") - parseInt(n2.data.year || "1970"));
+    nodes.sort((n1, n2) =>
+        edges.filter(edge => edge.data.target == n1.data.id).length * 1e6 + parseInt(n1.data.year || "1970")
+            - edges.filter(edge => edge.data.target == n2.data.id).length * 1e6 + parseInt(n2.data.year || "1970")
+    );
+
     const nodeIds = nodes.map(node => node.data.id);
 
     edges.sort((e1, e2) =>
